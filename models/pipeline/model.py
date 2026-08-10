@@ -8,7 +8,7 @@ used by the batched training loop (`finetune_gat`).
 """
 import torch
 import torch.nn.functional as F
-from torch_geometric.nn import GATConv, global_mean_pool, global_max_pool
+from torch_geometric.nn import GATv2Conv, global_mean_pool, global_max_pool
 from torch_geometric.loader import DataLoader
 
 from .config import FEATURE_DIM
@@ -20,19 +20,19 @@ class FakeNewsGAT(torch.nn.Module):
         self.dropout    = dropout
         self.input_proj = torch.nn.Linear(input_dim, hidden_dim)
 
-        self.conv1 = GATConv(hidden_dim,     hidden_dim,     heads=n_heads, concat=True,  dropout=dropout)
+        self.conv1 = GATv2Conv(hidden_dim,     hidden_dim,     heads=n_heads, concat=True,  dropout=dropout)
         self.lin1  = torch.nn.Linear(hidden_dim * n_heads, hidden_dim)
         self.bn1   = torch.nn.BatchNorm1d(hidden_dim)
 
-        self.conv2 = GATConv(hidden_dim,     hidden_dim * 2, heads=n_heads, concat=True,  dropout=dropout)
+        self.conv2 = GATv2Conv(hidden_dim,     hidden_dim * 2, heads=n_heads, concat=True,  dropout=dropout)
         self.lin2  = torch.nn.Linear(hidden_dim * 2 * n_heads, hidden_dim * 2)
         self.bn2   = torch.nn.BatchNorm1d(hidden_dim * 2)
 
-        self.conv3 = GATConv(hidden_dim * 2, hidden_dim * 2, heads=n_heads, concat=True,  dropout=dropout)
+        self.conv3 = GATv2Conv(hidden_dim * 2, hidden_dim * 2, heads=n_heads, concat=True,  dropout=dropout)
         self.lin3  = torch.nn.Linear(hidden_dim * 2 * n_heads, hidden_dim * 2)
         self.bn3   = torch.nn.BatchNorm1d(hidden_dim * 2)
 
-        self.conv4 = GATConv(hidden_dim * 2, hidden_dim,     heads=n_heads, concat=False, dropout=dropout)
+        self.conv4 = GATv2Conv(hidden_dim * 2, hidden_dim,     heads=n_heads, concat=False, dropout=dropout)
         self.bn4   = torch.nn.BatchNorm1d(hidden_dim)
 
         pool_dim = (hidden_dim + hidden_dim*2 + hidden_dim*2 + hidden_dim) * 2
