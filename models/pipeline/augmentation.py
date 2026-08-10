@@ -27,10 +27,12 @@ def score_documents(documents: list[dict],
                     eps: float = 0.3,
                     min_samples: int = 2) -> list[tuple[dict, float]]:
     """DBSCAN consensus clustering + domain credibility blending."""
-    snippets = [doc.get('snippet', '') for doc in documents]
-    if not snippets:
+
+    texts = [doc.get('full_text', '') for doc in documents]
+    if not texts:
         return []
-    embeddings  = ENCODER.encode(snippets, batch_size=32, show_progress_bar=False)
+    embeddings = ENCODER.encode(texts, batch_size=32, show_progress_bar=False)
+
     sim_matrix  = cosine_similarity(embeddings)
     dist_matrix = np.clip(1.0 - sim_matrix, 0, 2).astype(np.float64)
     labels      = DBSCAN(eps=eps, min_samples=min_samples,
@@ -96,10 +98,10 @@ def augment_with_cross_source(G: nx.Graph,
     new_nodes, new_edges = [], []
 
     for doc, doc_score in scored_docs:
-        if doc_score < score_threshold or not doc.get('snippet'):
+        if doc_score < score_threshold or not doc.get('full_text'):
             continue
 
-        ext_sents, ext_embs = extract_and_embed(doc['snippet'])
+        ext_sents, ext_embs = extract_and_embed(doc['full_text'])
         if not ext_sents:
             continue
 
