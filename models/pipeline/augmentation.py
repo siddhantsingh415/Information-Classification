@@ -3,8 +3,10 @@ Search-result augmentation logic.
 
 This is where retrieved (external) articles get folded into an existing
 article graph: retrieved docs are scored for consensus + source credibility,
-then their sentences are added as new 'evidence' nodes connected to the
-original article's sentences by cross-source similarity + NLI edges.
+then sentences from their full article text (see `_doc_text` — falls back to
+the search snippet if the page couldn't be fetched) are added as new
+'evidence' nodes connected to the original article's sentences by
+cross-source similarity + NLI edges.
 
 Edit this file to change: how retrieved documents are scored/ranked
 (`score_documents`), which role pairings are allowed to form cross-source
@@ -22,17 +24,26 @@ from .credibility import get_credibility, extract_domain
 from .graph_building import extract_and_embed, nli_batch, edge_type_from_probs
 
 
+def _doc_text(doc: dict) -> str:
+    """
+    Prefer the full scraped article body (retrieval.fetch_article_text) over
+    the short DuckDuckGo snippet — richer text means more sentences to draw
+    on when scoring consensus and building cross-source evidence edges. Falls
+    back to the snippet if the page couldn't be fetched (paywall, blocked
+    scraper, timeout, ...) or fetch_full_text=False was used upstream.
+    """
+    return doc.get('full_text') or doc.get('snippet') or ''
+
+
 def score_documents(documents: list[dict],
                     credibility_alpha: float = 0.6,
                     eps: float = 0.3,
                     min_samples: int = 2) -> list[tuple[dict, float]]:
     """DBSCAN consensus clustering + domain credibility blending."""
-
-    texts = [doc.get('full_text', '') for doc in documents]
-    if not texts:
+    doc_texts = [_doc_text(doc) for doc in documents]
+    if not doc_texts:
         return []
-    embeddings = ENCODER.encode(texts, batch_size=32, show_progress_bar=False)
-
+    embeddings  = ENCODER.encode(doc_texts, batch_size=32, show_progress_bar=False)
     sim_matrix  = cosine_similarity(embeddings)
     dist_matrix = np.clip(1.0 - sim_matrix, 0, 2).astype(np.float64)
     labels      = DBSCAN(eps=eps, min_samples=min_samples,
@@ -71,6 +82,11 @@ def augment_with_cross_source(G: nx.Graph,
     """
     Augment the graph with sentences from retrieved articles.
 
+    Each retrieved doc's full scraped article text is used when available
+    (falling back to the search snippet otherwise — see `_doc_text`), so a
+    doc typically contributes many more candidate sentences than the old
+    one-line-snippet version did.
+
     Cross-source edges are only drawn between semantically similar sentences
     of *matching roles*:
       - input analysis <-> ext analysis  (is our interpretation corroborated?)
@@ -98,10 +114,11 @@ def augment_with_cross_source(G: nx.Graph,
     new_nodes, new_edges = [], []
 
     for doc, doc_score in scored_docs:
-        if doc_score < score_threshold or not doc.get('full_text'):
+        doc_text = _doc_text(doc)
+        if doc_score < score_threshold or not doc_text:
             continue
 
-        ext_sents, ext_embs = extract_and_embed(doc['full_text'])
+        ext_sents, ext_embs = extract_and_embed(doc_text)
         if not ext_sents:
             continue
 

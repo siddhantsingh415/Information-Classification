@@ -21,13 +21,14 @@ from tqdm import tqdm
 
 from .config import ROLE_NAMES, nlp
 from .graph_building import build_article_graph
-from .retrieval import collect_evidence_by_headline, clean_headline, ddg_search
+from .retrieval import collect_evidence_by_headline, clean_headline, ddg_search, enrich_with_full_text
 from .augmentation import augment_with_cross_source
 from .features import graph_to_pyg
 
 
 def build_dataset(df, text_col='text', title_col='title',
-                  label_col='label_binary', sample=None, use_nli=True):
+                  label_col='label_binary', sample=None, use_nli=True,
+                  fetch_full_text=True):
     if sample:
         df = df.groupby(label_col, group_keys=False).apply(
             lambda g: g.sample(sample // 2, random_state=42)
@@ -55,7 +56,7 @@ def build_dataset(df, text_col='text', title_col='title',
         # Headline search + cross-source augmentation
         scored_docs = []
         try:
-            docs = collect_evidence_by_headline(title, k=10)
+            docs = collect_evidence_by_headline(title, k=10, fetch_full_text=fetch_full_text)
             if docs:
                 G, scored_docs = augment_with_cross_source(
                     G, article_sents, article_roles, docs, use_nli=use_nli
@@ -95,9 +96,14 @@ def build_batch(
     title_col: str  = 'title',
     label_col: str  = 'label_binary',
     use_nli:   bool = True,
+    fetch_full_text: bool = True,
 ):
     """
     Build graphs for one batch of articles.
+
+    fetch_full_text controls whether each retrieved doc's full article page is
+    scraped (see retrieval.py) — set False to skip those network round-trips
+    for a quicker run at the cost of thinner (snippet-only) evidence.
 
     Returns
     -------
@@ -126,7 +132,7 @@ def build_batch(
         scored_docs  = []
         got_evidence = False
         try:
-            docs = collect_evidence_by_headline(title, k=10)
+            docs = collect_evidence_by_headline(title, k=10, fetch_full_text=fetch_full_text)
             if docs:
                 G_aug, scored_docs = augment_with_cross_source(
                     G_base, article_sents, article_roles, docs, use_nli=use_nli
@@ -185,6 +191,7 @@ def _fallback_queries(item: FailedItem) -> list:
 def retry_failed_evidence(
     failed_items: list,
     use_nli: bool = True,
+    fetch_full_text: bool = True,
 ):
     """
     Attempt to retrieve evidence for articles that returned zero results during
@@ -208,6 +215,8 @@ def retry_failed_evidence(
                 docs = ddg_search(query, num_results=10)
                 if not docs:
                     continue
+                if fetch_full_text:
+                    docs = enrich_with_full_text(docs)
                 G_retry = copy.deepcopy(item.G_base)
                 G_aug, scored_docs = augment_with_cross_source(
                     G_retry, item.article_sents, item.article_roles,

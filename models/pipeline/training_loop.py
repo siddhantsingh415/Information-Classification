@@ -30,6 +30,7 @@ def batched_train_loop(
     val_split:     float = 0.2,
     retry:         bool  = True,
     use_nli:       bool  = True,
+    fetch_full_text: bool = True,
     save_prefix:   str   = 'fake_news_gat_v4',
     text_col:      str   = 'text',
     title_col:     str   = 'title',
@@ -37,6 +38,11 @@ def batched_train_loop(
 ):
     """
     Iterative build-and-train loop with per-batch metric tracking.
+
+    fetch_full_text controls whether each retrieved doc's full article page
+    is scraped (see retrieval.py) — set False to skip those extra network
+    round-trips for a faster run at the cost of thinner, snippet-only
+    evidence.
 
     Returns the final model and batch_history (list of per-batch metric dicts).
     """
@@ -54,10 +60,12 @@ def batched_train_loop(
     # Build val-pool graphs once upfront (they never change)
     print('\n[init] Building global validation pool...')
     val_pool_pyg, _, val_pool_fails, _ = build_batch(
-        pool_df, text_col, title_col, label_col, use_nli
+        pool_df, text_col, title_col, label_col,
+        use_nli=use_nli, fetch_full_text=fetch_full_text
     )
     if retry and val_pool_fails:
-        extra, _, _ = retry_failed_evidence(val_pool_fails, use_nli)
+        extra, _, _ = retry_failed_evidence(val_pool_fails, use_nli=use_nli,
+                                            fetch_full_text=fetch_full_text)
         val_pool_pyg.extend(extra)
     print(f'[init] Val pool ready: {len(val_pool_pyg)} graphs\n')
 
@@ -78,13 +86,15 @@ def batched_train_loop(
 
         # 2a. Build graphs for this batch
         b_pyg, b_scored, b_failed, _ = build_batch(
-            batch_df, text_col, title_col, label_col, use_nli
+            batch_df, text_col, title_col, label_col,
+            use_nli=use_nli, fetch_full_text=fetch_full_text
         )
 
         # 2b. Retry failed evidence
         if retry and b_failed:
             print(f'  Retrying {len(b_failed)} failed articles...')
-            r_pyg, r_scored, _ = retry_failed_evidence(b_failed, use_nli)
+            r_pyg, r_scored, _ = retry_failed_evidence(b_failed, use_nli=use_nli,
+                                                        fetch_full_text=fetch_full_text)
             b_pyg.extend(r_pyg)
             b_scored.extend(r_scored)
 
@@ -196,9 +206,10 @@ def _plot_batch_history(history, prefix):
 #
 #   final_model, history = batched_train_loop(
 #       df,
-#       batch_size    = 50,
-#       val_pool_size = 60,
-#       cold_epochs   = 80,
-#       warm_epochs   = 30,
-#       retry         = True,
+#       batch_size      = 50,
+#       val_pool_size   = 60,
+#       cold_epochs     = 80,
+#       warm_epochs     = 30,
+#       retry           = True,
+#       fetch_full_text = True,   # set False for a quicker, snippet-only run
 #   )
