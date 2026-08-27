@@ -125,10 +125,6 @@ The initial implementation achieved limited performance on the held-out test
 set:
 
 ```text
-Epoch 10: train=0.7343  val=0.7130  lr=4.95e-04
-Epoch 20: train=0.7139  val=0.6946  lr=4.78e-04
-Early stopping at epoch 21
-
 Test Results:
 Accuracy: 0.467
 F1 Score: 0.636
@@ -140,10 +136,6 @@ AUC-ROC: 0.500
 The second iteration improved classification accuracy:
 
 ```text
-Epoch 10: train=0.7090  val=0.6893  lr=4.95e-04
-Epoch 20: train=0.7044  val=0.7421  lr=4.78e-04
-Early stopping at epoch 23
-
 Test Results:
 Accuracy: 0.568
 F1 Score: 0.610
@@ -159,10 +151,6 @@ to separate the two classes.
 The third iteration produced a substantially larger improvement:
 
 ```text
-Epoch 10: train=0.5339  val=0.6192  lr=4.95e-04
-Epoch 20: train=0.5132  val=0.6269  lr=4.78e-04
-Early stopping at epoch 28
-
 Test Results:
 Accuracy: 0.743
 F1 Score: 0.716
