@@ -99,6 +99,8 @@ To investigate this, the system:
                             │
                             ▼
                      Real / Fake
+```
+
 
 ## Experimental Results
 
