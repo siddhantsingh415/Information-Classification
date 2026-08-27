@@ -22,6 +22,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from duckduckgo_search import DDGS
 import trafilatura
+from trafilatura.settings import use_config
 
 CACHE_DIR         = 'search_cache_v3'   # separate cache from models2 to avoid stale results
 ARTICLE_CACHE_DIR = 'article_cache_v1'  # cache for fetched full-article text, keyed by URL
@@ -31,6 +32,11 @@ FETCH_MAX_WORKERS = 5     # fetches are I/O-bound, so a small thread pool is eno
 MAX_ARTICLE_CHARS = 4000  # cap on extracted article text — keeps per-document embedding/NLI
                            # cost bounded and graphs from ballooning on very long articles;
                            # the lead usually carries most of a news article's actual content
+
+# trafilatura.fetch_url() doesn't take a `timeout=` kwarg directly -- the request
+# timeout is a config setting (DOWNLOAD_TIMEOUT), applied via a config object.
+_TRAFILATURA_CONFIG = use_config()
+_TRAFILATURA_CONFIG.set('DEFAULT', 'DOWNLOAD_TIMEOUT', str(FETCH_TIMEOUT))
 
 
 def _cache_path(query: str) -> str:
@@ -95,11 +101,12 @@ def fetch_article_text(url: str) -> str | None:
 
     text = None
     try:
-        downloaded = trafilatura.fetch_url(url, timeout=FETCH_TIMEOUT)
+        downloaded = trafilatura.fetch_url(url, config=_TRAFILATURA_CONFIG)
         if downloaded:
             text = trafilatura.extract(downloaded, favor_recall=True)
     except Exception as e:
         print(f'  Fetch failed for "{url[:60]}": {e}')
+        return None
 
     text = (text or '').strip()[:MAX_ARTICLE_CHARS]
     with open(cache_file, 'w', encoding='utf-8') as f:
