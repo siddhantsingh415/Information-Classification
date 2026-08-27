@@ -99,3 +99,35 @@ To investigate this, the system:
                             │
                             ▼
                      Real / Fake
+
+## Experimental Results
+
+The system has undergone several architectural iterations, with each version
+introducing changes to the graph construction, feature representation, and/or
+model architecture.
+
+### Performance Across Model Versions
+
+| Version | Accuracy | F1 Score | AUC-ROC | Early Stopping |
+|---------|----------|----------|---------|----------------|
+| `models1` | 0.467 | 0.636 | 0.500 | Epoch 21 |
+| `models2` | 0.568 | 0.610 | 0.531 | Epoch 23 |
+| `models3` | 0.743 | 0.716 | **0.859** | Epoch 28 |
+| `models4` | 0.784 | 0.778 | 0.841 | Epoch 21 |
+
+### Training Progression
+
+#### models1
+
+The initial implementation achieved limited performance on the held-out test
+set:
+
+```text
+Epoch 10: train=0.7343  val=0.7130  lr=4.95e-04
+Epoch 20: train=0.7139  val=0.6946  lr=4.78e-04
+Early stopping at epoch 21
+
+Test Results:
+Accuracy: 0.467
+F1 Score: 0.636
+AUC-ROC: 0.500
