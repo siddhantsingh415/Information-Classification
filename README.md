@@ -133,3 +133,59 @@ Test Results:
 Accuracy: 0.467
 F1 Score: 0.636
 AUC-ROC: 0.500
+```
+
+#### models2
+
+The second iteration improved classification accuracy:
+
+```text
+Epoch 10: train=0.7090  val=0.6893  lr=4.95e-04
+Epoch 20: train=0.7044  val=0.7421  lr=4.78e-04
+Early stopping at epoch 23
+
+Test Results:
+Accuracy: 0.568
+F1 Score: 0.610
+AUC-ROC: 0.531
+```
+
+Compared with models1, accuracy increased from 0.467 to 0.568 and AUC-ROC
+increased from 0.500 to 0.531, indicating an improvement in the model's ability
+to separate the two classes.
+
+#### models3
+
+The third iteration produced a substantially larger improvement:
+
+```text
+Epoch 10: train=0.5339  val=0.6192  lr=4.95e-04
+Epoch 20: train=0.5132  val=0.6269  lr=4.78e-04
+Early stopping at epoch 28
+
+Test Results:
+Accuracy: 0.743
+F1 Score: 0.716
+AUC-ROC: 0.859
+```
+
+This represents a significant improvement over the first two iterations,
+particularly in AUC-ROC, which increased from 0.531 in models2 to 0.859.
+
+#### models4
+
+The current models4 implementation further improved accuracy and F1 score:
+
+```text
+Test Results:
+Accuracy: 0.784
+F1 Score: 0.778
+AUC-ROC: 0.841
+```
+
+models4 should not be interpreted as a direct improvement over models3
+across every metric. While accuracy increased from 0.743 to 0.784 and F1
+increased from 0.716 to 0.778, AUC-ROC decreased slightly from 0.859 to 0.841.
+
+The results therefore represent an ongoing architectural development process
+rather than an unambiguous improvement across every evaluation metric.
