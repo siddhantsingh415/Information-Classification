@@ -1,31 +1,38 @@
-"""
-ISOT Fake News dataset loading and preprocessing.
-"""
+import json
 import pandas as pd
+from typing import Tuple
 
-
-def load_isot_dataset(fake_path: str = 'data/Fake.csv',
-                       real_path: str = 'data/True.csv',
-                       random_state: int = 42) -> pd.DataFrame:
+def load_averitec_dataset(filepath: str) -> pd.DataFrame:
     """
-    Load and preprocess the ISOT Fake News dataset.
-
-    - Concatenates the fake/real CSVs, shuffles, and adds a binary label
-      (label_binary == 1 for fake, 0 for real).
-    - Strips the Reuters dateline (e.g. "WASHINGTON (Reuters) - ") from real
-      articles to prevent the model from trivially learning "has a dateline
-      == real" instead of anything about the actual content.
+    Loads the AVeriTeC JSON dataset and extracts the claim, speaker, and veracity label.
+    Filters out ambiguous classes to maintain binary True/False alignment for the GAT pipeline.
     """
-    fake = pd.read_csv(fake_path)
-    real = pd.read_csv(real_path)
-    fake['label'] = 'fake'
-    real['label'] = 'real'
+    with open(filepath, 'r', encoding='utf-8') as f:
+        data = json.load(f)
 
-    df = pd.concat([fake, real]).sample(frac=1, random_state=random_state).reset_index(drop=True)
-    df['label_binary'] = (df['label'] == 'fake').astype(int)
+    records = []
+    for item in data:
+        label = item.get('label')
 
-    df['text'] = df['text'].str.replace(
-        r'^[A-Z\s,]+\([^)]+\)\s*-\s*', '', regex=True
-    ).str.strip()
+        # Map labels to binary classification
+        # Skip "Not Enough Evidence" and "Conflicting Evidence/Cherry-picking"
+        if label == "Supported":
+            binary_label = 1
+        elif label == "Refuted":
+            binary_label = 0
+        else:
+            continue
 
-    return df
+        records.append({
+            'text': item.get('claim', ''),
+            'speaker': item.get('speaker', ''),
+            'label': binary_label
+        })
+
+    return pd.DataFrame(records)
+
+def get_train_test_split(df: pd.DataFrame, train_frac: float = 0.8, random_state: int = 42) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Splits the filtered dataframe into training and testing sets."""
+    train_df = df.sample(frac=train_frac, random_state=random_state)
+    test_df = df.drop(train_df.index)
+    return train_df, test_df
