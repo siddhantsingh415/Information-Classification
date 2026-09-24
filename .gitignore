@@ -1,2 +1,4 @@
 **/search_cache_v3/**
 **/article_cache_v1/**
+.venv
+**/__pycache__/**

@@ -56,7 +56,7 @@ def build_dataset(df, text_col='text', title_col='title',
         # Headline search + cross-source augmentation
         scored_docs = []
         try:
-            docs = collect_evidence_by_headline(title, k=10, fetch_full_text=fetch_full_text)
+            docs = collect_evidence_by_headline(title, fetch_full_text=fetch_full_text)
             if docs:
                 G, scored_docs = augment_with_cross_source(
                     G, article_sents, article_roles, docs, use_nli=use_nli
@@ -132,7 +132,7 @@ def build_batch(
         scored_docs  = []
         got_evidence = False
         try:
-            docs = collect_evidence_by_headline(title, k=10, fetch_full_text=fetch_full_text)
+            docs = collect_evidence_by_headline(title, fetch_full_text=fetch_full_text)
             if docs:
                 G_aug, scored_docs = augment_with_cross_source(
                     G_base, article_sents, article_roles, docs, use_nli=use_nli
