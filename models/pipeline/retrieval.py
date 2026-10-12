@@ -2,11 +2,15 @@ import re
 import time
 import sqlite3
 import trafilatura
-from duckduckgo_search import DDGS
+try:
+    from ddgs import DDGS  # duckduckgo_search was renamed to ddgs
+except ImportError:
+    from duckduckgo_search import DDGS  # fallback for older installs
 from typing import List, Dict, Optional, Tuple
 from pipeline.config import nlp  # Leveraging your existing shared spaCy model
 
 DB_PATH = "evidence_cache.db"
+
 
 def extract_live_entities_and_claims(text: str) -> Tuple[List[str], str]:
     """Uses the shared spaCy model to extract speakers and lead sentences from raw text."""
@@ -22,6 +26,7 @@ def extract_live_entities_and_claims(text: str) -> Tuple[List[str], str]:
     lead_sentence = sentences[0] if sentences else text[:120]
 
     return unique_speakers, lead_sentence
+
 
 def generate_search_query(raw_text: str, title: str = "", speaker_override: str = None) -> str:
     """Constructs queries depending on whether input is structured dataset or unstructured live article."""
@@ -42,8 +47,20 @@ def generate_search_query(raw_text: str, title: str = "", speaker_override: str 
 
     return lead_sentence[:120]
 
-def search_claim_evidence(raw_input: str, speaker: Optional[str] = None, is_url: bool = False, max_results: int = 3) -> List[Dict]:
-    """Executes caching DDG search using dynamic query formulation."""
+
+def search_claim_evidence(raw_input: str, speaker: Optional[str] = None, is_url: bool = False,
+                           max_results: int = 3, verbose: bool = False) -> List[Dict]:
+    """
+    Executes caching DDG search using dynamic query formulation.
+
+    `verbose=True` prints a one-line notice whenever the search itself
+    succeeds but returns zero results -- silently returning [] here means
+    every downstream stage (add_evidence_nodes, augment_with_cross_source)
+    gets nothing to work with for that claim, but nothing raises an
+    exception, so this can go unnoticed for a long time without it. Pass
+    `verbose=True` from a diagnostic cell to measure how often that's
+    happening before assuming a fix worked.
+    """
     title = ""
     text_body = raw_input
 
@@ -60,6 +77,9 @@ def search_claim_evidence(raw_input: str, speaker: Optional[str] = None, is_url:
     try:
         with DDGS() as ddgs:
             search_results = list(ddgs.text(query, max_results=max_results))
+
+        if not search_results and verbose:
+            print(f"[retrieval] 0 search results for query: '{query}'")
 
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
@@ -85,6 +105,7 @@ def search_claim_evidence(raw_input: str, speaker: Optional[str] = None, is_url:
                     results.append({'url': url, 'source_domain': domain, 'text': text_content[:2000]})
                 time.sleep(0.5)
     except Exception as e:
-        print(f"Retrieval error for query '{query}': {e}")
+        if verbose:
+            print(f"[retrieval] error for query '{query}': {e}")
 
     return results

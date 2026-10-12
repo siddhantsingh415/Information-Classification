@@ -1,18 +1,37 @@
 """
-Node feature engineering (20-dimensional hand-crafted features per node) and
-conversion from a networkx argumentation graph into a PyTorch Geometric
-`Data` object ready to feed the GAT.
+Node feature engineering (hand-crafted structural features + each node's own
+sentence embedding) and conversion from a networkx argumentation graph into a
+PyTorch Geometric `Data` object ready to feed the GAT.
+
+Patched: node features now concatenate the original 20-dim hand-crafted
+structural feature vector (unchanged, including its per-graph column-max
+normalization) with each node's own raw sentence embedding, from the same
+`ENCODER` used everywhere else in the pipeline. The hand-crafted features
+never encoded what a node's text actually says -- only relational/structural
+statistics (neighbor counts, credibility weights, entailment/contradiction
+tallies, role one-hot) -- so a node with few or no relational neighbors (e.g.
+a claim with little retrieved evidence) previously had an almost-featureless
+vector regardless of its content. The embedding is concatenated *after*
+normalization, not folded into it: `ENCODER`'s embeddings are already on a
+consistent, comparable scale across nodes and graphs (that's the point of a
+shared encoder), whereas the hand-crafted block's per-graph column-max
+normalization is calibrated for features that are naturally non-negative
+(counts, ratios, weights) -- running an embedding's mixed-sign components
+through that same per-graph rescaling would make embeddings incomparable
+across different graphs, which defeats the purpose of using a shared encoder
+in the first place.
 """
 import numpy as np
 import networkx as nx
 import torch
 from torch_geometric.data import Data
 
-from .config import EDGE_NEUTRAL, EDGE_ENTAILMENT, EDGE_CONTRADICTION, ROLE_BACKGROUND
+from .config import EDGE_NEUTRAL, EDGE_ENTAILMENT, EDGE_CONTRADICTION, ROLE_BACKGROUND, ENCODER
 
 
 def compute_node_features(G: nx.Graph) -> np.ndarray:
     feature_list = []
+    texts = []
     for node_id, data in G.nodes(data=True):
         neighbors     = list(G.neighbors(node_id))
         ev_nbrs       = [n for n in neighbors if G.nodes[n].get('source') == 'evidence']
@@ -68,11 +87,20 @@ def compute_node_features(G: nx.Graph) -> np.ndarray:
             cross_ent_w,                                               # 18
             cross_cont_w,                                              # 19
         ])
+        texts.append(data.get('text', '') or '')
 
     arr     = np.array(feature_list, dtype=np.float32)
     col_max = arr.max(axis=0)
     col_max[col_max == 0] = 1
-    return arr / col_max
+    handcrafted = arr / col_max
+
+    # Each node's own sentence embedding -- the semantic signal the
+    # hand-crafted block above never captured. Kept on ENCODER's native
+    # scale (not run through the per-graph column-max normalization above).
+    text_embeddings = ENCODER.encode(texts, batch_size=32, show_progress_bar=False)
+    text_embeddings = np.asarray(text_embeddings, dtype=np.float32)
+
+    return np.concatenate([handcrafted, text_embeddings], axis=1)
 
 
 def graph_to_pyg(G: nx.Graph, label: int | None = None) -> Data:

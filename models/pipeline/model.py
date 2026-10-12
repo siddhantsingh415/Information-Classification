@@ -5,11 +5,35 @@ evaluation / checkpointing utilities.
 Edit this file to change: the model architecture (`FakeNewsGAT`), the
 cold-start training loop (`train_gat`), or the warm-start fine-tuning loop
 used by the batched training loop (`finetune_gat`).
+
+Patch history:
+  v2: `BCEWithLogitsLoss` weighted by `pos_weight = n_negative / n_positive`
+      to counter AVeriTeC's ~2.6:1 class imbalance (was causing an
+      always-predict-majority-class collapse).
+  v3: two follow-up fixes, made after v2's full pos_weight combined with
+      widespread evidence-retrieval failures (many training graphs reduced
+      to a single, nearly-featureless claim node) to produce the mirror-image
+      failure -- the model converged to always predicting the *minority*
+      class, since with little real signal to learn from, that was the
+      loss-minimizing strategy under a strong pos_weight, and early stopping
+      couldn't tell the difference because it picked checkpoints by
+      validation *loss*, not by how well the model actually discriminated:
+        1. `pos_weight` is now damped: `ratio ** pos_weight_damping`
+           (default damping=0.5, i.e. sqrt of the full inverse-frequency
+           ratio) rather than the full ratio, so it corrects for imbalance
+           without being strong enough to make a majority-negative
+           prediction pattern this costly to avoid.
+        2. Checkpoint selection in both `train_gat` and `finetune_gat` now
+           tracks validation F1 (higher is better) instead of validation
+           loss (lower is better) -- a weighted loss can be "minimized" by a
+           degenerate constant-output solution that a discrimination metric
+           like F1 would immediately expose.
 """
 import torch
 import torch.nn.functional as F
 from torch_geometric.nn import GATv2Conv, global_mean_pool, global_max_pool
 from torch_geometric.loader import DataLoader
+from sklearn.metrics import f1_score
 
 from .config import FEATURE_DIM
 
@@ -56,51 +80,80 @@ class FakeNewsGAT(torch.nn.Module):
         return self.mlp(xp)
 
 
-def train_gat(train_data, val_data, epochs=150, lr=5e-4, patience=20):
-    model     = FakeNewsGAT()
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
-    criterion = torch.nn.BCEWithLogitsLoss()
-    t_loader  = DataLoader(train_data, batch_size=16, shuffle=True)
-    v_loader  = DataLoader(val_data,   batch_size=16)
+def _pos_weight_from(data, damping: float = 0.5) -> torch.Tensor:
+    """
+    BCEWithLogitsLoss pos_weight, computed from whatever dataset is passed
+    in. `damping` interpolates between no correction (0.0) and the full
+    inverse-frequency ratio n_negative/n_positive (1.0) via `ratio **
+    damping` -- default 0.5 is the square root of the full ratio. See the
+    v3 note in the module docstring for why the full ratio overcorrected.
+    """
+    labels = torch.cat([d.y for d in data]).squeeze()
+    n_pos = float((labels == 1).sum())
+    n_neg = float((labels == 0).sum())
+    if n_pos == 0:
+        return torch.tensor([1.0])
+    ratio = n_neg / n_pos
+    return torch.tensor([ratio ** damping])
 
-    best_val, no_improve, best_state = float('inf'), 0, None
+
+def _eval_epoch(model, loader, criterion):
+    """Runs one pass over `loader` in eval mode, returning (avg_loss, f1)."""
+    model.eval()
+    v_loss, preds, labels = 0.0, [], []
+    with torch.no_grad():
+        for b in loader:
+            out = model(b.x, b.edge_index, b.batch).view(-1)
+            y   = b.y.view(-1)
+            v_loss += criterion(out, y).item()
+            preds.extend((torch.sigmoid(out) > 0.5).long().tolist())
+            labels.extend(y.long().tolist())
+    avg_loss = v_loss / max(len(loader), 1)
+    val_f1   = f1_score(labels, preds, zero_division=0)
+    return avg_loss, val_f1
+
+
+def train_gat(train_data, val_data, epochs=150, lr=5e-4, patience=20, pos_weight_damping=0.5):
+    model      = FakeNewsGAT()
+    optimizer  = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
+    scheduler  = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+    pos_weight = _pos_weight_from(train_data, damping=pos_weight_damping)
+    criterion  = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    t_loader   = DataLoader(train_data, batch_size=16, shuffle=True)
+    v_loader   = DataLoader(val_data,   batch_size=16)
+
+    best_f1, no_improve, best_state = -1.0, 0, None
     for epoch in range(epochs):
         model.train()
         t_loss = 0
         for b in t_loader:
             optimizer.zero_grad()
-            out  = model(b.x, b.edge_index, b.batch).squeeze()
-            loss = criterion(out, b.y.squeeze())
+            out  = model(b.x, b.edge_index, b.batch).view(-1)
+            loss = criterion(out, b.y.view(-1))
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             t_loss += loss.item()
         scheduler.step()
 
-        model.eval()
-        v_loss = 0
-        with torch.no_grad():
-            for b in v_loader:
-                v_loss += criterion(
-                    model(b.x, b.edge_index, b.batch).squeeze(), b.y.squeeze()
-                ).item()
+        avg_v, val_f1 = _eval_epoch(model, v_loader, criterion)
+        avg_t = t_loss / len(t_loader)
 
-        avg_t, avg_v = t_loss / len(t_loader), v_loss / len(v_loader)
         if (epoch + 1) % 10 == 0:
-            print(f'Epoch {epoch+1:3d}  train={avg_t:.4f}  val={avg_v:.4f}  '
-                  f'lr={scheduler.get_last_lr()[0]:.2e}')
+            print(f'Epoch {epoch+1:3d}  train_loss={avg_t:.4f}  val_loss={avg_v:.4f}  '
+                  f'val_f1={val_f1:.3f}  lr={scheduler.get_last_lr()[0]:.2e}')
 
-        if avg_v < best_val:
-            best_val, no_improve = avg_v, 0
+        if val_f1 > best_f1:
+            best_f1, no_improve = val_f1, 0
             best_state = {k: v.clone() for k, v in model.state_dict().items()}
         else:
             no_improve += 1
             if no_improve >= patience:
-                print(f'Early stopping at epoch {epoch+1}')
+                print(f'Early stopping at epoch {epoch+1} (best val_f1={best_f1:.3f})')
                 break
 
-    model.load_state_dict(best_state)
+    if best_state is not None:
+        model.load_state_dict(best_state)
     return model
 
 
@@ -108,76 +161,71 @@ def finetune_gat(
     model,
     train_data,
     val_data,
-    epochs:     int   = 30,
-    lr:         float = 1e-4,
-    patience:   int   = 8,
-    batch_size: int   = 16,
+    epochs:             int   = 30,
+    lr:                 float = 1e-4,
+    patience:           int   = 8,
+    batch_size:         int   = 16,
+    pos_weight_damping: float = 0.5,
 ):
     """
     Fine-tune an existing FakeNewsGAT on new data (warm start).
 
     Differs from train_gat in three ways: no re-initialisation (continues
     from the model's current weights), a lower default learning rate, and it
-    returns the loss dict alongside the model instead of just printing it.
+    returns the loss/F1 dict alongside the model instead of just printing it.
 
-    Returns the updated model and a loss dict {'train_loss': ..., 'val_loss': ...}.
+    Returns the updated model and a dict {'train_loss', 'val_loss', 'val_f1'}
+    from the best (highest val_f1) checkpoint found.
     """
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
-    criterion = torch.nn.BCEWithLogitsLoss()
-    t_loader  = DataLoader(train_data, batch_size=batch_size, shuffle=True)
-    v_loader  = DataLoader(val_data,   batch_size=batch_size)
+    optimizer  = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
+    scheduler  = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+    pos_weight = _pos_weight_from(train_data, damping=pos_weight_damping)
+    criterion  = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    t_loader   = DataLoader(train_data, batch_size=batch_size, shuffle=True)
+    v_loader   = DataLoader(val_data,   batch_size=batch_size)
 
-    best_val, no_improve, best_state = float('inf'), 0, None
-    avg_t = avg_v = 0.0
+    best_f1, no_improve, best_state = -1.0, 0, None
+    avg_t, best_val_loss = 0.0, float('inf')
 
     for epoch in range(epochs):
         model.train()
         t_loss = 0.0
         for b in t_loader:
             optimizer.zero_grad()
-            out  = model(b.x, b.edge_index, b.batch).squeeze()
-            loss = criterion(out, b.y.squeeze())
+            out  = model(b.x, b.edge_index, b.batch).view(-1)
+            loss = criterion(out, b.y.view(-1))
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             t_loss += loss.item()
         scheduler.step()
 
-        model.eval()
-        v_loss = 0.0
-        with torch.no_grad():
-            for b in v_loader:
-                v_loss += criterion(
-                    model(b.x, b.edge_index, b.batch).squeeze(),
-                    b.y.squeeze()
-                ).item()
-
+        avg_v, val_f1 = _eval_epoch(model, v_loader, criterion)
         avg_t = t_loss / max(len(t_loader), 1)
-        avg_v = v_loss / max(len(v_loader), 1)
 
-        if avg_v < best_val:
-            best_val, no_improve = avg_v, 0
+        if val_f1 > best_f1:
+            best_f1, no_improve = val_f1, 0
             best_state = {k: v.clone() for k, v in model.state_dict().items()}
+            best_val_loss = avg_v
         else:
             no_improve += 1
             if no_improve >= patience:
                 break
 
-    if best_state:
+    if best_state is not None:
         model.load_state_dict(best_state)
-    return model, {'train_loss': avg_t, 'val_loss': best_val}
+    return model, {'train_loss': avg_t, 'val_loss': best_val_loss, 'val_f1': best_f1}
 
 
 def evaluate_model(model, dataset):
-    from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
+    from sklearn.metrics import accuracy_score, roc_auc_score
     model.eval()
     preds, labels = [], []
     with torch.no_grad():
         for b in DataLoader(dataset, batch_size=16):
-            probs = torch.sigmoid(model(b.x, b.edge_index, b.batch).squeeze())
+            probs = torch.sigmoid(model(b.x, b.edge_index, b.batch).view(-1))
             preds.extend(probs.tolist())
-            labels.extend(b.y.squeeze().tolist())
+            labels.extend(b.y.view(-1).tolist())
     binary = [1 if p > 0.5 else 0 for p in preds]
     return {
         'accuracy': accuracy_score(labels, binary),

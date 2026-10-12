@@ -2,7 +2,6 @@ import re
 import spacy
 import trafilatura
 from typing import Dict, List, Tuple
-from models4.sentence_roles import classify_sentence_roles
 
 # Load spaCy model for Named Entity Recognition (NER)
 try:

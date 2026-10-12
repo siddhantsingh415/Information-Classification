@@ -40,7 +40,20 @@ ROLE_ANALYSIS   = 2
 ROLE_BACKGROUND = 3
 ROLE_NAMES      = ['claim', 'evidence', 'analysis', 'background']
 
-# Node feature dimension — expanded to include role encoding
-FEATURE_DIM = 20
+# Node feature dimension. Two parts, concatenated in
+# pipeline/features.py::compute_node_features:
+#   1. HANDCRAFTED_FEATURE_DIM (20) -- the original hand-crafted structural
+#      features (neighbor counts, credibility weights, entailment/
+#      contradiction tallies, role one-hot). These never encoded what a
+#      node's text actually *says*.
+#   2. EMBEDDING_DIM -- each node's own sentence embedding, from the same
+#      ENCODER used everywhere else in the pipeline, giving the GAT direct
+#      semantic signal instead of purely structural/relational features.
+# Pulled from the encoder itself (get_sentence_embedding_dimension()) rather
+# than hardcoded, so this doesn't silently go stale if ENCODER's underlying
+# model is ever swapped for one with a different embedding size.
+HANDCRAFTED_FEATURE_DIM = 20
+EMBEDDING_DIM           = ENCODER.get_sentence_embedding_dimension()
+FEATURE_DIM             = HANDCRAFTED_FEATURE_DIM + EMBEDDING_DIM
 
 print('[pipeline.config] Setup complete.')

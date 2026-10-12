@@ -9,6 +9,21 @@ information) and gets nudged by two kinds of signals:
   - 'user' signals: explicit user feedback gets a full-strength nudge
     (USER_WEIGHT). Nothing in this pipeline emits 'user' signals yet — that's
     a hook for a future feedback UI.
+
+Patched for models5's AVeriTeC pipeline (two fixes, both in
+`bulk_update_from_prediction`):
+  1. Retrieved docs come back from `pipeline.retrieval.search_claim_evidence`
+     with a `'url'` key, not `'link'` — the original code only checked
+     `'link'`, so it never found a URL for any AVeriTeC-sourced doc and
+     silently updated nothing. Now checks `'url'` first, falls back to
+     `'link'` for any caller still using the old key.
+  2. `signal = 'fake' if prediction > 0.5 else 'real'` assumed a label
+     convention where a high prediction meant "fake". This pipeline's labels
+     (see `pipeline/data_loading.py`) map `Supported -> 1`, so a high
+     prediction here means "the model believes this claim is well-supported"
+     -- the domains that supplied that supporting evidence should get a
+     credibility *boost*, not a penalty. The signal direction is flipped
+     accordingly.
 """
 import sqlite3
 from contextlib import contextmanager
@@ -90,10 +105,12 @@ def bulk_update_from_prediction(scored_docs, prediction: float,
                                  confidence_threshold: float = 0.1) -> int:
     if model_confidence < confidence_threshold:
         return 0
-    signal = 'fake' if prediction > 0.5 else 'real'
+    # prediction is P(label == 1) == P("Supported"/real) under this pipeline's
+    # label convention -- see module docstring fix #2.
+    signal = 'real' if prediction > 0.5 else 'fake'
     n = 0
     for doc, doc_score in scored_docs:
-        url = doc.get('link', '')
+        url = doc.get('url') or doc.get('link', '')
         if url:
             update_credibility(extract_domain(url), signal, 'model',
                                confidence=model_confidence * doc_score)
