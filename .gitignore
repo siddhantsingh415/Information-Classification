@@ -2,3 +2,4 @@
 **/article_cache_v1/**
 .venv
 **/__pycache__/**
+**/graphql_cache/**
